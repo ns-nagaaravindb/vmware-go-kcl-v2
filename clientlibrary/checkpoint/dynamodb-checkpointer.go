@@ -139,6 +139,17 @@ func (checkpointer *DynamoCheckpoint) GetLease(shard *par.ShardStatus, newAssign
 		return err
 	}
 
+	// Refresh sticky value from DynamoDB during lease acquisition/renewal
+	sticky := -1
+	if stickyAttr, ok := currentCheckpoint[StickyKey]; ok && stickyAttr.N != nil {
+		var parsedSticky int64
+		_, err := fmt.Sscanf(aws.StringValue(stickyAttr.N), "%d", &parsedSticky)
+		if err == nil {
+			sticky = int(parsedSticky)
+		}
+	}
+		shard.SetSticky(sticky)
+
 	isClaimRequestExpired := shard.IsClaimRequestExpired(checkpointer.kclConfig)
 
 	var claimRequest string
@@ -300,6 +311,19 @@ func (checkpointer *DynamoCheckpoint) FetchCheckpoint(shard *par.ShardStatus) er
 		}
 		shard.LeaseTimeout = currentLeaseTimeout
 	}
+
+	// Read sticky column if present (optional, read-only)
+	// Default to -1 if missing or invalid
+	sticky := -1
+	if stickyAttr, ok := checkpoint[StickyKey]; ok && stickyAttr.N != nil {
+		// Parse as number
+		var parsedSticky int64
+		_, err := fmt.Sscanf(aws.StringValue(stickyAttr.N), "%d", &parsedSticky)
+		if err == nil {
+			sticky = int(parsedSticky)
+		}
+	}
+	shard.SetSticky(sticky)
 
 	return nil
 }
