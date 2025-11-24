@@ -141,14 +141,16 @@ func (checkpointer *DynamoCheckpoint) GetLease(shard *par.ShardStatus, newAssign
 
 	// Refresh sticky value from DynamoDB during lease acquisition/renewal
 	sticky := -1
-	if stickyAttr, ok := currentCheckpoint[StickyKey]; ok && stickyAttr.N != nil {
-		var parsedSticky int64
-		_, err := fmt.Sscanf(aws.StringValue(stickyAttr.N), "%d", &parsedSticky)
-		if err == nil {
-			sticky = int(parsedSticky)
+	if stickyAttr, ok := currentCheckpoint[StickyKey]; ok {
+		if numAttr, ok := stickyAttr.(*types.AttributeValueMemberN); ok {
+			var parsedSticky int64
+			_, err := fmt.Sscanf(numAttr.Value, "%d", &parsedSticky)
+			if err == nil {
+				sticky = int(parsedSticky)
+			}
 		}
 	}
-		shard.SetSticky(sticky)
+	shard.SetSticky(sticky)
 
 	isClaimRequestExpired := shard.IsClaimRequestExpired(checkpointer.kclConfig)
 
@@ -315,12 +317,13 @@ func (checkpointer *DynamoCheckpoint) FetchCheckpoint(shard *par.ShardStatus) er
 	// Read sticky column if present (optional, read-only)
 	// Default to -1 if missing or invalid
 	sticky := -1
-	if stickyAttr, ok := checkpoint[StickyKey]; ok && stickyAttr.N != nil {
-		// Parse as number
-		var parsedSticky int64
-		_, err := fmt.Sscanf(aws.StringValue(stickyAttr.N), "%d", &parsedSticky)
-		if err == nil {
-			sticky = int(parsedSticky)
+	if stickyAttr, ok := checkpoint[StickyKey]; ok {
+		if numAttr, ok := stickyAttr.(*types.AttributeValueMemberN); ok {
+			var parsedSticky int64
+			_, err := fmt.Sscanf(numAttr.Value, "%d", &parsedSticky)
+			if err == nil {
+				sticky = int(parsedSticky)
+			}
 		}
 	}
 	shard.SetSticky(sticky)

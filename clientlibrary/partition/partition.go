@@ -48,7 +48,7 @@ type ShardStatus struct {
 	// child shard doesn't have end sequence number
 	EndingSequenceNumber string
 	ClaimRequest         string
-	Sticky               int // Sticky assignment: -1/0=normal, 10=pinned to worker
+	Sticky               int // Sticky assignment: -1/0=normal, 10=pinned to worker, 20=release signal
 }
 
 func (ss *ShardStatus) GetLeaseOwner() string {

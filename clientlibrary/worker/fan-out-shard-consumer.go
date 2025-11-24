@@ -102,6 +102,30 @@ func (sc *FanOutShardConsumer) getRecords() error {
 				log.Errorf("Error in refreshing lease on shard: %s for worker: %s. Error: %+v", sc.shard.ID, sc.consumerID, err)
 				return err
 			}
+
+			// Check if shard should be released (sticky=20)
+			// GetLease refreshes shard data including sticky value
+			if sc.shard.GetSticky() == 20 {
+				log.Infof("Shard %s has sticky=20, initiating graceful release", sc.shard.ID)
+
+				// Checkpoint current progress
+				if err := recordCheckpointer.Checkpoint(nil); err != nil {
+					log.Errorf("Error checkpointing before release: %+v", err)
+				}
+
+				// Remove lease owner (clear AssignedTo field)
+				if err := sc.checkpointer.RemoveLeaseOwner(sc.shard.ID); err != nil {
+					log.Errorf("Error removing lease owner: %+v", err)
+				}
+
+				log.Infof("Successfully released shard %s (sticky=20)", sc.shard.ID)
+
+				// Shutdown gracefully
+				shutdownInput := &kcl.ShutdownInput{ShutdownReason: kcl.REQUESTED, Checkpointer: recordCheckpointer}
+				sc.recordProcessor.Shutdown(shutdownInput)
+				return nil
+			}
+
 			refreshLeaseTimer = time.After(time.Until(sc.shard.LeaseTimeout.Add(-time.Duration(sc.kclConfig.LeaseRefreshPeriodMillis) * time.Millisecond)))
 			// log metric for renewed lease for worker
 			sc.mService.LeaseRenewed(sc.shard.ID)
