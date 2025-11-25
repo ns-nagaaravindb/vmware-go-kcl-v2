@@ -126,6 +126,29 @@ func (sc *FanOutShardConsumer) getRecords() error {
 			return nil
 		}
 
+		// Check if StickyWorker has been reassigned to a different worker
+		// If sticky=10 and StickyWorker points to a different worker, release the shard
+		// This allows dynamic reassignment of sticky shards without setting sticky=20 first
+		if sc.shard.GetSticky() == 10 {
+			stickyWorker := sc.shard.GetStickyWorker()
+			if stickyWorker != "" && stickyWorker != sc.consumerID {
+				log.Infof("Shard %s StickyWorker changed from %s to %s, releasing shard", 
+					sc.shard.ID, sc.consumerID, stickyWorker)
+
+				// Remove lease owner to allow the new sticky worker to acquire it
+				if err := sc.checkpointer.RemoveLeaseOwner(sc.shard.ID); err != nil {
+					log.Errorf("Error removing lease owner: %+v", err)
+				}
+
+				log.Infof("Successfully released shard %s to allow %s to acquire it", sc.shard.ID, stickyWorker)
+
+				// Shutdown gracefully
+				shutdownInput := &kcl.ShutdownInput{ShutdownReason: kcl.REQUESTED, Checkpointer: recordCheckpointer}
+				sc.recordProcessor.Shutdown(shutdownInput)
+				return nil
+			}
+		}
+
 			refreshLeaseTimer = time.After(time.Until(sc.shard.LeaseTimeout.Add(-time.Duration(sc.kclConfig.LeaseRefreshPeriodMillis) * time.Millisecond)))
 			// log metric for renewed lease for worker
 			sc.mService.LeaseRenewed(sc.shard.ID)
