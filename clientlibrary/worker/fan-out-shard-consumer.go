@@ -108,22 +108,45 @@ func (sc *FanOutShardConsumer) getRecords() error {
 			if sc.shard.GetSticky() == 20 {
 				log.Infof("Shard %s has sticky=20, initiating graceful release", sc.shard.ID)
 
-				// Checkpoint current progress
-				if err := recordCheckpointer.Checkpoint(nil); err != nil {
-					log.Errorf("Error checkpointing before release: %+v", err)
-				}
+				// DO NOT checkpoint here - preserve the existing checkpoint so another worker
+				// can resume from the same position. Calling Checkpoint(nil) incorrectly sets
+				// checkpoint to SHARD_END, which causes workers to skip this shard entirely.
+				// The existing checkpoint in DynamoDB will be preserved automatically.
 
 				// Remove lease owner (clear AssignedTo field)
 				if err := sc.checkpointer.RemoveLeaseOwner(sc.shard.ID); err != nil {
 					log.Errorf("Error removing lease owner: %+v", err)
 				}
 
-				log.Infof("Successfully released shard %s (sticky=20)", sc.shard.ID)
+				log.Infof("Successfully released shard %s (sticky=20), checkpoint preserved for next worker", sc.shard.ID)
 
 				// Shutdown gracefully
 				shutdownInput := &kcl.ShutdownInput{ShutdownReason: kcl.REQUESTED, Checkpointer: recordCheckpointer}
 				sc.recordProcessor.Shutdown(shutdownInput)
 				return nil
+			}
+
+			// Check if StickyWorker has been reassigned to a different worker
+			// If sticky=10 and StickyWorker points to a different worker, release the shard
+			// This allows dynamic reassignment of sticky shards without setting sticky=20 first
+			if sc.shard.GetSticky() == 10 {
+				stickyWorker := sc.shard.GetStickyWorker()
+				if stickyWorker != "" && stickyWorker != sc.consumerID {
+					log.Infof("Shard %s StickyWorker changed from %s to %s, releasing shard",
+						sc.shard.ID, sc.consumerID, stickyWorker)
+
+					// Remove lease owner to allow the new sticky worker to acquire it
+					if err := sc.checkpointer.RemoveLeaseOwner(sc.shard.ID); err != nil {
+						log.Errorf("Error removing lease owner: %+v", err)
+					}
+
+					log.Infof("Successfully released shard %s to allow %s to acquire it", sc.shard.ID, stickyWorker)
+
+					// Shutdown gracefully
+					shutdownInput := &kcl.ShutdownInput{ShutdownReason: kcl.REQUESTED, Checkpointer: recordCheckpointer}
+					sc.recordProcessor.Shutdown(shutdownInput)
+					return nil
+				}
 			}
 
 			refreshLeaseTimer = time.After(time.Until(sc.shard.LeaseTimeout.Add(-time.Duration(sc.kclConfig.LeaseRefreshPeriodMillis) * time.Millisecond)))
