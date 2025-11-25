@@ -44,6 +44,7 @@ const (
 	ParentShardIdKey  = "ParentShardId"
 	ClaimRequestKey   = "ClaimRequest"
 	StickyKey         = "Sticky"
+	StickyWorkerKey   = "StickyWorker" // The worker ID this shard is pinned to
 
 	// ShardEnd We've completely processed all records in this shard.
 	ShardEnd = "SHARD_END"

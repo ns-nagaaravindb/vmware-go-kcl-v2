@@ -330,9 +330,27 @@ func (w *Worker) eventLoop() {
 				// Skip sticky shards (sticky=10) that are assigned to other workers
 				// Sticky shards are pinned and cannot be acquired by other workers
 				// BUT allow the current worker to renew its own sticky shard leases
-				if shard.GetSticky() == 10 && shard.GetLeaseOwner() != "" && shard.GetLeaseOwner() != w.workerID {
-					log.Debugf("Shard %s is sticky and assigned to worker %s, skipping", shard.ID, shard.GetLeaseOwner())
-					continue
+				//
+				// IMPORTANT: Also check StickyWorker attribute for persistent binding
+				// If StickyWorker is set, ONLY that specific worker can acquire this shard
+				// This ensures sticky shards return to their designated worker even after restart
+				if shard.GetSticky() == 10 {
+					stickyWorker := shard.GetStickyWorker()
+
+					// If shard has a StickyWorker binding, only that worker can claim it
+					if stickyWorker != "" && stickyWorker != w.workerID {
+						log.Debugf("Shard %s is pinned to worker %s (current: %s), skipping",
+							shard.ID, stickyWorker, w.workerID)
+						continue
+					}
+
+					// If shard is currently assigned to a different worker (but no StickyWorker binding)
+					// respect that assignment (prevent rebalancing)
+					if shard.GetLeaseOwner() != "" && shard.GetLeaseOwner() != w.workerID {
+						log.Debugf("Shard %s is sticky and assigned to worker %s, skipping",
+							shard.ID, shard.GetLeaseOwner())
+						continue
+					}
 				}
 
 				// Skip shards marked for release (sticky=20) - no worker should acquire these

@@ -141,6 +141,7 @@ func (checkpointer *DynamoCheckpoint) GetLease(shard *par.ShardStatus, newAssign
 
 	// Refresh sticky value from DynamoDB during lease acquisition/renewal
 	sticky := -1
+	var stickyWorker string
 	if stickyAttr, ok := currentCheckpoint[StickyKey]; ok {
 		if numAttr, ok := stickyAttr.(*types.AttributeValueMemberN); ok {
 			var parsedSticky int64
@@ -150,7 +151,14 @@ func (checkpointer *DynamoCheckpoint) GetLease(shard *par.ShardStatus, newAssign
 			}
 		}
 	}
+	// Read StickyWorker attribute if present
+	if stickyWorkerAttr, ok := currentCheckpoint[StickyWorkerKey]; ok {
+		if strAttr, ok := stickyWorkerAttr.(*types.AttributeValueMemberS); ok {
+			stickyWorker = strAttr.Value
+		}
+	}
 	shard.SetSticky(sticky)
+	shard.SetStickyWorker(stickyWorker)
 
 	isClaimRequestExpired := shard.IsClaimRequestExpired(checkpointer.kclConfig)
 
@@ -232,6 +240,20 @@ func (checkpointer *DynamoCheckpoint) GetLease(shard *par.ShardStatus, newAssign
 		}
 	}
 
+	// Preserve Sticky attribute if it exists (>=0 means it's been set)
+	if sticky := shard.GetSticky(); sticky >= 0 {
+		marshalledCheckpoint[StickyKey] = &types.AttributeValueMemberN{
+			Value: fmt.Sprintf("%d", sticky),
+		}
+	}
+
+	// Preserve StickyWorker attribute if it exists
+	if stickyWorker := shard.GetStickyWorker(); stickyWorker != "" {
+		marshalledCheckpoint[StickyWorkerKey] = &types.AttributeValueMemberS{
+			Value: stickyWorker,
+		}
+	}
+
 	if checkpointer.kclConfig.EnableLeaseStealing {
 		if claimRequest != "" && claimRequest == newAssignTo && !isClaimRequestExpired {
 			if expressionAttributeValues == nil {
@@ -283,6 +305,20 @@ func (checkpointer *DynamoCheckpoint) CheckpointSequence(shard *par.ShardStatus)
 		marshalledCheckpoint[ParentShardIdKey] = &types.AttributeValueMemberS{Value: shard.ParentShardId}
 	}
 
+	// Preserve Sticky attribute if it exists (>=0 means it's been set)
+	if sticky := shard.GetSticky(); sticky >= 0 {
+		marshalledCheckpoint[StickyKey] = &types.AttributeValueMemberN{
+			Value: fmt.Sprintf("%d", sticky),
+		}
+	}
+
+	// Preserve StickyWorker attribute if it exists
+	if stickyWorker := shard.GetStickyWorker(); stickyWorker != "" {
+		marshalledCheckpoint[StickyWorkerKey] = &types.AttributeValueMemberS{
+			Value: stickyWorker,
+		}
+	}
+
 	return checkpointer.saveItem(marshalledCheckpoint)
 }
 
@@ -317,6 +353,7 @@ func (checkpointer *DynamoCheckpoint) FetchCheckpoint(shard *par.ShardStatus) er
 	// Read sticky column if present (optional, read-only)
 	// Default to -1 if missing or invalid
 	sticky := -1
+	var stickyWorker string
 	if stickyAttr, ok := checkpoint[StickyKey]; ok {
 		if numAttr, ok := stickyAttr.(*types.AttributeValueMemberN); ok {
 			var parsedSticky int64
@@ -326,7 +363,14 @@ func (checkpointer *DynamoCheckpoint) FetchCheckpoint(shard *par.ShardStatus) er
 			}
 		}
 	}
+	// Read StickyWorker attribute if present
+	if stickyWorkerAttr, ok := checkpoint[StickyWorkerKey]; ok {
+		if strAttr, ok := stickyWorkerAttr.(*types.AttributeValueMemberS); ok {
+			stickyWorker = strAttr.Value
+		}
+	}
 	shard.SetSticky(sticky)
+	shard.SetStickyWorker(stickyWorker)
 
 	return nil
 }
@@ -469,6 +513,20 @@ func (checkpointer *DynamoCheckpoint) ClaimShard(shard *par.ShardStatus, claimID
 		marshalledCheckpoint[ParentShardIdKey] = &types.AttributeValueMemberS{Value: shard.ParentShardId}
 		conditionalExpression += " AND ParentShardId = :parent_shard"
 		expressionAttributeValues[":parent_shard"] = &types.AttributeValueMemberS{Value: shard.ParentShardId}
+	}
+
+	// Preserve Sticky attribute if it exists (>=0 means it's been set)
+	if sticky := shard.GetSticky(); sticky >= 0 {
+		marshalledCheckpoint[StickyKey] = &types.AttributeValueMemberN{
+			Value: fmt.Sprintf("%d", sticky),
+		}
+	}
+
+	// Preserve StickyWorker attribute if it exists
+	if stickyWorker := shard.GetStickyWorker(); stickyWorker != "" {
+		marshalledCheckpoint[StickyWorkerKey] = &types.AttributeValueMemberS{
+			Value: stickyWorker,
+		}
 	}
 
 	return checkpointer.conditionalUpdate(conditionalExpression, expressionAttributeValues, marshalledCheckpoint)

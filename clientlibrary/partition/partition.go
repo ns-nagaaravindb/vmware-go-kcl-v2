@@ -48,7 +48,8 @@ type ShardStatus struct {
 	// child shard doesn't have end sequence number
 	EndingSequenceNumber string
 	ClaimRequest         string
-	Sticky               int // Sticky assignment: -1/0=normal, 10=pinned to worker, 20=release signal
+	Sticky               int    // Sticky assignment: -1/0=normal, 10=pinned to worker, 20=release signal
+	StickyWorker         string // The worker ID this shard is pinned to (used when Sticky=10)
 }
 
 func (ss *ShardStatus) GetLeaseOwner() string {
@@ -106,4 +107,16 @@ func (ss *ShardStatus) SetSticky(sticky int) {
 	ss.Mux.Lock()
 	defer ss.Mux.Unlock()
 	ss.Sticky = sticky
+}
+
+func (ss *ShardStatus) GetStickyWorker() string {
+	ss.Mux.RLock()
+	defer ss.Mux.RUnlock()
+	return ss.StickyWorker
+}
+
+func (ss *ShardStatus) SetStickyWorker(worker string) {
+	ss.Mux.Lock()
+	defer ss.Mux.Unlock()
+	ss.StickyWorker = worker
 }
