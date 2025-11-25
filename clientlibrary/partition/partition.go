@@ -48,6 +48,7 @@ type ShardStatus struct {
 	// child shard doesn't have end sequence number
 	EndingSequenceNumber string
 	ClaimRequest         string
+	Sticky               int // Sticky assignment: -1/0=normal, 10=pinned to worker, 20=release signal
 }
 
 func (ss *ShardStatus) GetLeaseOwner() string {
@@ -93,4 +94,16 @@ func (ss *ShardStatus) IsClaimRequestExpired(kclConfig *config.KinesisClientLibC
 		return leaseTimeout.
 			Before(time.Now().UTC().Add(time.Duration(-kclConfig.LeaseStealingClaimTimeoutMillis) * time.Millisecond))
 	}
+}
+
+func (ss *ShardStatus) GetSticky() int {
+	ss.Mux.RLock()
+	defer ss.Mux.RUnlock()
+	return ss.Sticky
+}
+
+func (ss *ShardStatus) SetSticky(sticky int) {
+	ss.Mux.Lock()
+	defer ss.Mux.Unlock()
+	ss.Sticky = sticky
 }

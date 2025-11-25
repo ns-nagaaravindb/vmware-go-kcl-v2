@@ -32,9 +32,10 @@ package worker
 import (
 	"context"
 	"errors"
-	log "github.com/sirupsen/logrus"
 	"math"
 	"time"
+
+	log "github.com/sirupsen/logrus"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/kinesis"
@@ -142,7 +143,7 @@ func (sc *PollingShardConsumer) getRecords() error {
 	// starting async lease renewal thread
 	leaseRenewalErrChan := make(chan error, 1)
 	go func() {
-		leaseRenewalErrChan <- sc.renewLease(ctx)
+		leaseRenewalErrChan <- sc.renewLease(ctx, recordCheckpointer)
 	}()
 	for {
 		getRecordsStartTime := time.Now()
@@ -306,7 +307,7 @@ func (sc *PollingShardConsumer) callGetRecordsAPI(gri *kinesis.GetRecordsInput) 
 	return getResp, 0, err
 }
 
-func (sc *PollingShardConsumer) renewLease(ctx context.Context) error {
+func (sc *PollingShardConsumer) renewLease(ctx context.Context, recordCheckpointer kcl.IRecordProcessorCheckpointer) error {
 	renewDuration := time.Duration(sc.kclConfig.LeaseRefreshWaitTime) * time.Millisecond
 	for {
 		timer := time.NewTimer(renewDuration)
@@ -320,6 +321,26 @@ func (sc *PollingShardConsumer) renewLease(ctx context.Context) error {
 					sc.shard.ID, sc.consumerID, err)
 				return err
 			}
+
+			// Check if shard should be released (sticky=20)
+			// GetLease refreshes shard data including sticky value
+			if sc.shard.GetSticky() == 20 {
+				log.Infof("Shard %s has sticky=20, initiating graceful release", sc.shard.ID)
+
+				// Checkpoint current progress
+				if err := recordCheckpointer.Checkpoint(nil); err != nil {
+					log.Errorf("Error checkpointing before release: %+v", err)
+				}
+
+				// Remove lease owner (clear AssignedTo field)
+				if err := sc.checkpointer.RemoveLeaseOwner(sc.shard.ID); err != nil {
+					log.Errorf("Error removing lease owner: %+v", err)
+				}
+
+				log.Infof("Successfully released shard %s (sticky=20)", sc.shard.ID)
+				return nil // Exit gracefully
+			}
+
 			// log metric for renewed lease for worker
 			sc.mService.LeaseRenewed(sc.shard.ID)
 		case <-ctx.Done():

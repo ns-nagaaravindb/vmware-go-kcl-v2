@@ -43,6 +43,7 @@ const (
 	SequenceNumberKey = "Checkpoint"
 	ParentShardIdKey  = "ParentShardId"
 	ClaimRequestKey   = "ClaimRequest"
+	StickyKey         = "Sticky"
 
 	// ShardEnd We've completely processed all records in this shard.
 	ShardEnd = "SHARD_END"

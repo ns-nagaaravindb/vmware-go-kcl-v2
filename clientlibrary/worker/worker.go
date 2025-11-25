@@ -327,6 +327,20 @@ func (w *Worker) eventLoop() {
 					continue
 				}
 
+				// Skip sticky shards (sticky=10) that are assigned to other workers
+				// Sticky shards are pinned and cannot be acquired by other workers
+				// BUT allow the current worker to renew its own sticky shard leases
+				if shard.GetSticky() == 10 && shard.GetLeaseOwner() != "" && shard.GetLeaseOwner() != w.workerID {
+					log.Debugf("Shard %s is sticky and assigned to worker %s, skipping", shard.ID, shard.GetLeaseOwner())
+					continue
+				}
+
+				// Skip shards marked for release (sticky=20) - no worker should acquire these
+				if shard.GetSticky() == 20 {
+					log.Debugf("Shard %s has sticky=20 (release signal), skipping acquisition", shard.ID)
+					continue
+				}
+
 				var stealShard bool
 				if w.kclConfig.EnableLeaseStealing && shard.ClaimRequest != "" {
 					upcomingStealingInterval := time.Now().UTC().Add(time.Duration(w.kclConfig.LeaseStealingIntervalMillis) * time.Millisecond)
@@ -449,11 +463,38 @@ func (w *Worker) rebalance() error {
 	}
 
 	// Steal a random shard from the worker with the most shards
+	// Filter out sticky shards (sticky=10 and sticky=20) as they cannot be stolen
+	var eligibleShards []*par.ShardStatus
+	for _, shard := range workers[workerSteal] {
+		// Check if shard still exists in shardStatus (could have been deleted by syncShard)
+		shardStatus, exists := w.shardStatus[shard.ID]
+		if !exists {
+			log.Debugf("Shard %s no longer exists in shardStatus, skipping", shard.ID)
+			continue
+		}
+
+		// Skip shards with sticky=10 (pinned to their worker) or sticky=20 (marked for release)
+		if shardStatus.GetSticky() != 10 && shardStatus.GetSticky() != 20 {
+			eligibleShards = append(eligibleShards, shard)
+		}
+	}
+
+	if len(eligibleShards) == 0 {
+		log.Debugf("All shards from worker %s are sticky, cannot steal any. workerID: %s", workerSteal, w.workerID)
+		return nil
+	}
 	w.shardStealInProgress = true
-	rnd, _ := rand.Int(rand.Reader, big.NewInt(int64(len(workers[workerSteal]))))
+	rnd, _ := rand.Int(rand.Reader, big.NewInt(int64(len(eligibleShards))))
 	randIndex := int(rnd.Int64())
-	shardToSteal := workers[workerSteal][randIndex]
-	log.Debugf("Stealing shard %s from %s", shardToSteal, workerSteal)
+	shardToSteal := eligibleShards[randIndex]
+	log.Debugf("Stealing shard %s from %s", shardToSteal.ID, workerSteal)
+
+	// Check again if shard still exists before claiming (could have been deleted by syncShard)
+	if _, exists := w.shardStatus[shardToSteal.ID]; !exists {
+		log.Debugf("Shard %s no longer exists in shardStatus, cannot claim", shardToSteal.ID)
+		w.shardStealInProgress = false
+		return nil
+	}
 
 	err = w.checkpointer.ClaimShard(w.shardStatus[shardToSteal.ID], w.workerID)
 	if err != nil {
