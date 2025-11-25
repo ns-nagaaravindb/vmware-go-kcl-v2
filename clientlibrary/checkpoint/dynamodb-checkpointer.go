@@ -232,6 +232,13 @@ func (checkpointer *DynamoCheckpoint) GetLease(shard *par.ShardStatus, newAssign
 		}
 	}
 
+	// Preserve Sticky attribute if it exists (>=0 means it's been set)
+	if sticky := shard.GetSticky(); sticky >= 0 {
+		marshalledCheckpoint[StickyKey] = &types.AttributeValueMemberN{
+			Value: fmt.Sprintf("%d", sticky),
+		}
+	}
+
 	if checkpointer.kclConfig.EnableLeaseStealing {
 		if claimRequest != "" && claimRequest == newAssignTo && !isClaimRequestExpired {
 			if expressionAttributeValues == nil {
@@ -281,6 +288,13 @@ func (checkpointer *DynamoCheckpoint) CheckpointSequence(shard *par.ShardStatus)
 
 	if len(shard.ParentShardId) > 0 {
 		marshalledCheckpoint[ParentShardIdKey] = &types.AttributeValueMemberS{Value: shard.ParentShardId}
+	}
+
+	// Preserve Sticky attribute if it exists (>=0 means it's been set)
+	if sticky := shard.GetSticky(); sticky >= 0 {
+		marshalledCheckpoint[StickyKey] = &types.AttributeValueMemberN{
+			Value: fmt.Sprintf("%d", sticky),
+		}
 	}
 
 	return checkpointer.saveItem(marshalledCheckpoint)
@@ -469,6 +483,13 @@ func (checkpointer *DynamoCheckpoint) ClaimShard(shard *par.ShardStatus, claimID
 		marshalledCheckpoint[ParentShardIdKey] = &types.AttributeValueMemberS{Value: shard.ParentShardId}
 		conditionalExpression += " AND ParentShardId = :parent_shard"
 		expressionAttributeValues[":parent_shard"] = &types.AttributeValueMemberS{Value: shard.ParentShardId}
+	}
+
+	// Preserve Sticky attribute if it exists (>=0 means it's been set)
+	if sticky := shard.GetSticky(); sticky >= 0 {
+		marshalledCheckpoint[StickyKey] = &types.AttributeValueMemberN{
+			Value: fmt.Sprintf("%d", sticky),
+		}
 	}
 
 	return checkpointer.conditionalUpdate(conditionalExpression, expressionAttributeValues, marshalledCheckpoint)
